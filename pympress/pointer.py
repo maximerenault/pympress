@@ -31,6 +31,7 @@ import enum
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gdk, GdkPixbuf, GLib
+import cairo
 
 from pympress import util, extras
 
@@ -56,8 +57,8 @@ class Pointer(object):
         config (:class:`~pympress.config.Config`): A config object containing preferences
         builder (:class:`~pympress.builder.Builder`): A builder from which to load widgets
     """
-    #: :class:`~GdkPixbuf.Pixbuf` to read XML descriptions of GUIs and load them.
-    pointer = GdkPixbuf.Pixbuf()
+    #: :class:`~cairo.ImageSurface` of the pointer, ready to paint
+    pointer = cairo.ImageSurface(cairo.Format.ARGB32, 1, 1)
     #: `(float, float)` of position relative to slide, where the pointer should appear
     pointer_pos = (.5, .5)
     #: `bool` indicating whether we should show the pointer
@@ -118,9 +119,16 @@ class Pointer(object):
             raise ValueError('Wrong color name')
         path = util.get_icon_path('pointer_' + name + '.png')
         try:
-            self.pointer = GdkPixbuf.Pixbuf.new_from_file(path)
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(path)
         except Exception:
             logger.exception(_('Failed loading pixbuf for pointer "{}" from: {}'.format(name, path)))
+            return
+
+        # Convert once rather than at every draw
+        self.pointer = cairo.ImageSurface(cairo.Format.ARGB32, pixbuf.get_width(), pixbuf.get_height())
+        context = cairo.Context(self.pointer)
+        Gdk.cairo_set_source_pixbuf(context, pixbuf, 0, 0)
+        context.paint()
 
 
     def change_pointercolor(self, action, target):
@@ -204,7 +212,7 @@ class Pointer(object):
         if self.show_pointer:
             x = ww * self.pointer_pos[0] - self.pointer.get_width() / 2
             y = wh * self.pointer_pos[1] - self.pointer.get_height() / 2
-            Gdk.cairo_set_source_pixbuf(cairo_context, self.pointer, x, y)
+            cairo_context.set_source_surface(self.pointer, x, y)
             cairo_context.paint()
 
 
