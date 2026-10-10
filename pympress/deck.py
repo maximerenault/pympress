@@ -144,10 +144,14 @@ class Overview(builder.Builder):
         self.grid_size = (len(pages), 1)
 
         # Always keep the first drawing area as it is used to provide surfaces in the cache
-        for row in range(1, self.grid_size[0]):
-            self.deck_grid.remove_row(row)
-        for col in range(1, self.grid_size[1]):
-            self.deck_grid.remove_row(col)
+        frames = [da.get_parent() for da in self.deck_da_list]
+        for frame in frames[1:]:
+            self.deck_grid.remove(frame)
+
+        # Drop drawing areas beyond the number of pages, keeping the frames of the others alive
+        for frame in frames[max(1, len(pages)):]:
+            frame.destroy()
+        del self.deck_da_list[max(1, len(pages)):]
 
         # Set drawing areas
         for num, da in enumerate(self.deck_da_list[1:], 1):
