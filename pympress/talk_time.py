@@ -51,6 +51,8 @@ class TimeLabelColorer(object):
 
     #: :class:`~Gtk.CssProvider` affecting the style context of the labels
     color_override = None
+    #: `str` the last CSS loaded in :attr:`color_override`
+    color_spec = None
 
     #: `list` of tuples (`int`, :class:`~Gdk.RGBA`), which are the desired colors at the corresponding timestamps.
     #: Sorted on the timestamps.
@@ -102,7 +104,7 @@ class TimeLabelColorer(object):
     def default_color(self):
         """ Forces to reset the default colors on the label.
         """
-        self.color_override.load_from_data(''.encode('ascii'))
+        self.load_color_spec('')
 
 
     def update_time_color(self, remaining):
@@ -133,6 +135,18 @@ class TimeLabelColorer(object):
         else:
             color_spec = '* {{color: {}}}'.format(color.to_string())
 
+        self.load_color_spec(color_spec)
+
+
+    def load_color_spec(self, color_spec):
+        """ Apply the CSS color to the label, if it changed.
+
+        Args:
+            color_spec (`str`): the CSS to load
+        """
+        if color_spec == self.color_spec:
+            return
+        self.color_spec = color_spec
         self.color_override.load_from_data(color_spec.encode('ascii'))
 
 
@@ -298,7 +312,7 @@ class TimeCounter(object):
             self.timing_tracker.end_time = elapsed
 
         if self.ett.est_time:
-            self.label_colorer.update_time_color(self.ett.est_time - elapsed)
+            self.label_colorer.update_time_color(self.ett.est_time - int(elapsed))
         else:
             self.label_colorer.default_color()
 
