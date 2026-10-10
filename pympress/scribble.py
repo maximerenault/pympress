@@ -511,27 +511,29 @@ class Scribbler(builder.Builder):
         """
         scale = widget.get_window().get_scale_factor()
         ww, wh = widget.get_allocated_width(), widget.get_allocated_height()
-        cw, ch = self.scribble_cache.get_width(), self.scribble_cache.get_height()
-
-        cairo_context.push_group()
-
-        cairo_context.save()
-
-        cairo_context.scale(ww * scale / cw, wh * scale / ch)
-        cairo_context.set_source_surface(self.scribble_cache)
-        cairo_context.paint()
-
-        cairo_context.restore()
-
         pen_scale_factor = max(ww / 900, wh / 900)  # or sqrt of product
+
+        # Only a stroke in progress (e.g. erasing) needs compositing apart from the slide
+        if self.scribble_drawing:
+            cairo_context.push_group()
+
+        # Skip blitting an empty cache
+        if self.next_render or self.scribble_drawing:
+            cw, ch = self.scribble_cache.get_width(), self.scribble_cache.get_height()
+            cairo_context.save()
+            cairo_context.scale(ww * scale / cw, wh * scale / ch)
+            cairo_context.set_source_surface(self.scribble_cache)
+            cairo_context.paint()
+            cairo_context.restore()
+
         if self.scribble_drawing:
             cairo_context.set_line_cap(cairo.LINE_CAP_ROUND)
             color, width, points, pressure = self.scribble_list[-1]
             self.render_scribble(cairo_context, color, width * pen_scale_factor, [(x * ww, y * wh) for x, y in points],
                                  pressure)
 
-        cairo_context.pop_group_to_source()
-        cairo_context.paint()
+            cairo_context.pop_group_to_source()
+            cairo_context.paint()
 
 
         if widget.get_name() == 'scribble_p_da' and self.mouse_pos is not None:
