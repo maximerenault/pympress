@@ -253,8 +253,8 @@ class Overview(builder.Builder):
         page_num = int(widget.get_name()[4:])
         pb = self.cache.get('deck', page_num)
         if pb is None:
-            # We’ll redraw later
-            widget.queue_draw()
+            # Render on idle, which queues the redraw
+            GLib.idle_add(self.prerender, widget)
             return
 
         window = widget.get_window()
