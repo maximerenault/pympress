@@ -46,15 +46,28 @@ class GstOverlay(base.VideoOverlay):
     playbin = None
     #: A :class:`~Gst.Base.Sink` to display video content
     sink = None
+    #: A :class:`~Gst.Element` tee splitting the decoded video towards the sink of each window
+    tee = None
+    #: The :class:`~pympress.media_overlays.gst_backend.GstOverlay` owning the pipeline we display, if not ourselves
+    master = None
 
     #: `int` number of milliseconds between updates
     update_freq = 200
 
-    def __init__(self, *args, **kwargs):
-        # Create GStreamer playbin
-        self.playbin = Gst.ElementFactory.make('playbin', None)
-        self.sink = Gst.ElementFactory.make('gtksink', None)
-        self.playbin.set_property('video-sink', self.sink)
+    def __init__(self, *args, master=None, **kwargs):
+        if master is None:
+            # Create GStreamer playbin, with a tee as video sink so other windows can tap into the decoded stream
+            self.playbin = Gst.ElementFactory.make('playbin', None)
+            self.tee = Gst.ElementFactory.make('tee', None)
+            video_sink = Gst.Bin.new(None)
+            video_sink.add(self.tee)
+            video_sink.add_pad(Gst.GhostPad.new('sink', self.tee.get_static_pad('sink')))
+            self.playbin.set_property('video-sink', video_sink)
+        else:
+            self.playbin = master.playbin
+            self.tee = master.tee
+        self.master = master
+        self.sink = self.add_sink()
 
         super(GstOverlay, self).__init__(*args, **kwargs)
 
@@ -67,10 +80,42 @@ class GstOverlay(base.VideoOverlay):
         bus = self.playbin.get_bus()
         bus.add_signal_watch()
         bus.enable_sync_message_emission()
-        bus.connect('message::eos', lambda *args: GLib.idle_add(self.handle_end))
-        bus.connect('message::error', lambda _, msg: logger.error('{} {}'.format(*msg.parse_error())))
+        # Only the pipeline owner handles ending, as the actions reach both overlays
+        if master is None:
+            bus.connect('message::eos', lambda *args: GLib.idle_add(self.handle_end))
+            bus.connect('message::error', lambda _, msg: logger.error('{} {}'.format(*msg.parse_error())))
         bus.connect('message::state-changed', self.on_state_changed)
         bus.connect('message::duration-changed', lambda *args: GLib.idle_add(self.do_update_duration))
+
+
+    @classmethod
+    def mirror(cls, master, *args, **kwargs):
+        """ Create an overlay showing the same media as another, decoding it only once.
+
+        Args:
+            master (:class:`~pympress.media_overlays.gst_backend.GstOverlay`): The overlay owning the pipeline
+        """
+        return cls(*args, master=master, **kwargs)
+
+
+    def add_sink(self):
+        """ Add a branch to the tee with a new gtksink.
+
+        Returns:
+            :class:`~Gst.Element`: the new sink
+        """
+        queue = Gst.ElementFactory.make('queue', None)
+        sink = Gst.ElementFactory.make('gtksink', None)
+        video_sink = self.tee.get_parent()
+        video_sink.add(queue)
+        video_sink.add(sink)
+        queue.link(sink)
+        request_pad = getattr(self.tee, 'request_pad_simple', None) or self.tee.get_request_pad
+        request_pad('src_%u').link(queue.get_static_pad('sink'))
+        # In case the pipeline is already set up
+        queue.sync_state_with_parent()
+        sink.sync_state_with_parent()
+        return sink
 
 
     def is_playing(self):
@@ -88,6 +133,8 @@ class GstOverlay(base.VideoOverlay):
         Args:
             filepath (`pathlib.Path`): The path to the media file path
         """
+        if self.master is not None:
+            return
         self.playbin.set_property('uri', filepath.as_uri())
         self.playbin.set_state(Gst.State.READY)
 
@@ -98,6 +145,8 @@ class GstOverlay(base.VideoOverlay):
         Args:
             value (`bool`): `True` iff this player should be muted
         """
+        if self.master is not None:
+            return False
         flags = self.playbin.get_property('flags')
         # Fall back to the documented value if introspection fails,
         # see https://gstreamer.freedesktop.org/documentation/playback/playsink.html?gi-language=python#GstPlayFlags
@@ -155,7 +204,7 @@ class GstOverlay(base.VideoOverlay):
         changed, time_ns = self.playbin.query_position(Gst.Format.TIME)
         time = time_ns / 1e9
         self.update_progress(time)
-        if self.last_timestamp <= self.end_pos <= time:
+        if self.master is None and self.last_timestamp <= self.end_pos <= time:
             self.handle_end()
         self.last_timestamp = time
         return self.playbin.get_state(0).state in {Gst.State.PLAYING, Gst.State.PAUSED}
@@ -180,7 +229,9 @@ class GstOverlay(base.VideoOverlay):
         Returns:
             `bool`: `True` iff this function should be run again (:func:`~GLib.idle_add` convention)
         """
-        self.playbin.set_state(Gst.State.PLAYING if not self.is_playing() else Gst.State.PAUSED)
+        # Toggling is done once, by the pipeline owner
+        if self.master is None:
+            self.playbin.set_state(Gst.State.PLAYING if not self.is_playing() else Gst.State.PAUSED)
 
         return False
 
@@ -188,8 +239,9 @@ class GstOverlay(base.VideoOverlay):
     def do_stop(self):
         """ Stops playing in the backend player.
         """
-        self.playbin.set_state(Gst.State.NULL)
-        self.playbin.set_state(Gst.State.READY)
+        if self.master is None:
+            self.playbin.set_state(Gst.State.NULL)
+            self.playbin.set_state(Gst.State.READY)
         self.sink.props.widget.hide()
 
         return False
@@ -207,7 +259,8 @@ class GstOverlay(base.VideoOverlay):
             `bool`: `True` iff this function should be run again (:func:`~GLib.idle_add` convention)
         """
         self.last_timestamp = time
-        self.playbin.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, time * Gst.SECOND)
+        if self.master is None:
+            self.playbin.seek_simple(Gst.Format.TIME, Gst.SeekFlags.FLUSH, time * Gst.SECOND)
         return False
 
 

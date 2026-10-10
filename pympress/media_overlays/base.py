@@ -117,6 +117,16 @@ class VideoOverlay(builder.Builder):
         # TODO: handle poster
 
 
+    @classmethod
+    def mirror(cls, master, *args, **kwargs):
+        """ Create an overlay showing the same media as another, sharing its pipeline if the backend allows it.
+
+        Args:
+            master (:class:`~pympress.media_overlays.base.VideoOverlay`): The overlay already playing this media
+        """
+        return cls(*args, **kwargs)
+
+
     def handle_embed(self, mapped_widget):
         """ Handler to embed the video player in the window, connected to the :attr:`~.Gtk.Widget.signals.map` signal.
         """

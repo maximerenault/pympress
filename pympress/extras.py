@@ -298,8 +298,8 @@ class Media(object):
                     'set_time': dict(activate=functools.partial(self.set_time, media_id), parameter_type=float)
                 }, action_group)
 
-                v_da_c = factory(self.c_overlay, page_type, action_group, media)
                 v_da_p = factory(self.p_overlay, page_type, action_group, media._replace(show_controls=True))
+                v_da_c = factory.mirror(v_da_p, self.c_overlay, page_type, action_group, media)
 
                 self._media_overlays[media_id] = (v_da_c, v_da_p)
 
