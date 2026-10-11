@@ -50,6 +50,8 @@ class GstOverlay(base.VideoOverlay):
     tee = None
     #: The :class:`~pympress.media_overlays.gst_backend.GstOverlay` owning the pipeline we display, if not ourselves
     master = None
+    #: `bool` whether to stop the pipeline once it is done prerolling, as stopping it meanwhile blocks
+    stop_when_ready = False
 
     #: `int` number of milliseconds between updates
     update_freq = 200
@@ -84,6 +86,7 @@ class GstOverlay(base.VideoOverlay):
         if master is None:
             bus.connect('message::eos', lambda *args: GLib.idle_add(self.handle_end))
             bus.connect('message::error', lambda _, msg: logger.error('{} {}'.format(*msg.parse_error())))
+            bus.connect('message::async-done', self.on_async_done)
         bus.connect('message::state-changed', self.on_state_changed)
         bus.connect('message::duration-changed', lambda *args: GLib.idle_add(self.do_update_duration))
 
@@ -175,6 +178,18 @@ class GstOverlay(base.VideoOverlay):
             self.on_initial_play()
 
 
+    def on_async_done(self, bus, msg):
+        """ Callback triggered when the pipeline finished prerolling, to apply a stop requested meanwhile.
+
+        Args:
+            bus (:class:`~Gst.Bus`): the bus that we are connected to
+            msg (:class:`~Gst.Message`): the "async-done" message
+        """
+        if self.stop_when_ready:
+            self.stop_when_ready = False
+            self.playbin.set_state(Gst.State.NULL)
+
+
     def on_initial_play(self):
         """ Set starting position, start scrollbar updates, unhide overlay. """
         # set starting position, if needed
@@ -213,8 +228,10 @@ class GstOverlay(base.VideoOverlay):
     def do_prepare(self):
         """ Preroll the pipeline in the background, so that playing only has to start the clock.
         """
-        if self.master is None and self.playbin.get_state(0).state < Gst.State.PAUSED:
-            self.playbin.set_state(Gst.State.PAUSED)
+        if self.master is None:
+            self.stop_when_ready = False
+            if self.playbin.get_state(0).state < Gst.State.PAUSED:
+                self.playbin.set_state(Gst.State.PAUSED)
 
 
     def do_play(self):
@@ -223,6 +240,7 @@ class GstOverlay(base.VideoOverlay):
         Returns:
             `bool`: `True` iff this function should be run again (:func:`~GLib.idle_add` convention)
         """
+        self.stop_when_ready = False
         self.playbin.set_state(Gst.State.PLAYING)
 
         return False
@@ -238,6 +256,7 @@ class GstOverlay(base.VideoOverlay):
         """
         # Toggling is done once, by the pipeline owner
         if self.master is None:
+            self.stop_when_ready = False
             # Toggle from the pending state, so a pause during a state change is not lost
             ret, state, pending = self.playbin.get_state(0)
             target = state if pending == Gst.State.VOID_PENDING else pending
@@ -250,7 +269,11 @@ class GstOverlay(base.VideoOverlay):
         """ Stops playing in the backend player.
         """
         if self.master is None:
-            self.playbin.set_state(Gst.State.NULL)
+            # Stopping during preroll waits for the decoders to be set up, which can take seconds
+            if self.playbin.get_state(0).pending != Gst.State.VOID_PENDING:
+                self.stop_when_ready = True
+            else:
+                self.playbin.set_state(Gst.State.NULL)
         self.sink.props.widget.hide()
 
         return False
