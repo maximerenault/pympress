@@ -98,6 +98,11 @@ class VideoOverlay(builder.Builder):
         self.load_ui('media_overlay')
         self.toolbar.set_visible(media.show_controls)
 
+        # Keep the widget in its window while hidden, so players can attach to it before it is shown
+        self.media_overlay.hide()
+        self.media_overlay.set_no_show_all(True)
+        self.parent.add_overlay(self.media_overlay)
+
         self.connect_signals(self)
 
         # medias, here the actions are scoped to the current widget
@@ -229,12 +234,12 @@ class VideoOverlay(builder.Builder):
 
 
     def is_shown(self):
-        """ Returns whether the media overlay is currently added to the overlays, or hidden.
+        """ Returns whether the media overlay is currently displayed, or hidden.
 
         Returns:
             `bool`: `True` iff the overlay is currently displayed.
         """
-        return self.media_overlay.get_parent() is not None
+        return self.media_overlay.get_visible()
 
 
     def is_playing(self):
@@ -268,27 +273,30 @@ class VideoOverlay(builder.Builder):
             logger.warning('Negative margin(s) clipped to 0 (might alter the aspect ratio?): ' +
                            'LTRB = {}'.format(self.rect))
 
-        if not self.media_overlay.get_parent():
-            self.parent.add_overlay(self.media_overlay)
+        if not self.is_shown():
             self.parent.reorder_overlay(self.media_overlay, 2)
+            self.media_overlay.show()
             self.resize()
             self.parent.queue_draw()
-        self.media_overlay.show()
 
 
     def do_hide(self, *args):
-        """ Remove widget from overlays. Needs to be called from the main thread.
+        """ Stop and hide the widget. Needs to be called from the main thread.
 
         Returns:
             `bool`: `True` iff this function should be run again (:func:`~GLib.idle_add` convention)
         """
         self.do_stop()
         self.media_overlay.hide()
-
-        if self.media_overlay.get_parent():
-            self.parent.remove(self.media_overlay)
         self.parent.queue_draw()
         return False
+
+
+    def remove(self):
+        """ Stop and remove the widget from the overlays, before discarding it.
+        """
+        self.do_hide()
+        self.parent.remove(self.media_overlay)
 
 
     def do_play(self):
