@@ -231,7 +231,10 @@ class GstOverlay(base.VideoOverlay):
         """
         # Toggling is done once, by the pipeline owner
         if self.master is None:
-            self.playbin.set_state(Gst.State.PLAYING if not self.is_playing() else Gst.State.PAUSED)
+            # Toggle from the pending state, so a pause during a state change is not lost
+            ret, state, pending = self.playbin.get_state(0)
+            target = state if pending == Gst.State.VOID_PENDING else pending
+            self.playbin.set_state(Gst.State.PAUSED if target == Gst.State.PLAYING else Gst.State.PLAYING)
 
         return False
 
