@@ -210,6 +210,13 @@ class GstOverlay(base.VideoOverlay):
         return self.playbin.get_state(0).state in {Gst.State.PLAYING, Gst.State.PAUSED}
 
 
+    def do_prepare(self):
+        """ Preroll the pipeline in the background, so that playing only has to start the clock.
+        """
+        if self.master is None and self.playbin.get_state(0).state < Gst.State.PAUSED:
+            self.playbin.set_state(Gst.State.PAUSED)
+
+
     def do_play(self):
         """ Start playing the media file.
 
@@ -244,7 +251,6 @@ class GstOverlay(base.VideoOverlay):
         """
         if self.master is None:
             self.playbin.set_state(Gst.State.NULL)
-            self.playbin.set_state(Gst.State.READY)
         self.sink.props.widget.hide()
 
         return False

@@ -198,6 +198,8 @@ class Media(object):
     """
     #: `dict` of :class:`~pympress.media_overlays.base.VideoOverlay` ready to be added on top of the slides
     _media_overlays = {}
+    #: `set` of the identifiers of the medias on the current page
+    _current_media = set()
 
     #: :class:`~Gtk.Overlay` for the Content window.
     c_overlay = None
@@ -255,8 +257,13 @@ class Media(object):
     def remove_media_overlays(self):
         """ Remove current media overlays.
         """
+        current, self._current_media = self._current_media, set()
         for media_id in self._media_overlays:
             self.hide(media_id)
+        # Free the players that were prepared but never shown
+        for media_id in current:
+            for overlay in self._media_overlays[media_id]:
+                overlay.do_stop()
 
 
     def purge_media_overlays(self):
@@ -308,9 +315,12 @@ class Media(object):
 
             self._media_overlays[media_id][0].mute(True)
             self._media_overlays[media_id][1].mute(False)
+            self._current_media.add(media_id)
 
             if any(overlay.autoplay for overlay in self._media_overlays[media_id]):
                 self.play(media_id)
+            else:
+                self.prepare(media_id)
             # TODO: handle poster
 
 
@@ -350,6 +360,16 @@ class Media(object):
             c.do_play()
 
 
+    def prepare(self, media_id):
+        """ Get a media ready to play without showing it, so that playback starts without delay.
+
+        Args:
+            media_id (`int`): A unique identifier of the media to prepare
+        """
+        for overlay in self._media_overlays[media_id]:
+            overlay.do_prepare()
+
+
     def hide(self, media_id, gaction=None, param=None):
         """ Stops playing a media and hides the player. Used as a callback.
 
@@ -362,13 +382,14 @@ class Media(object):
             c, p = self._media_overlays[media_id]
             if c.is_shown(): c.do_hide()
             if p.is_shown(): p.do_hide()
+            if media_id in self._current_media:
+                self.prepare(media_id)
 
 
     def hide_all(self):
         """ Stops all playing medias and hides the players. Used before exit.
         """
-        for media_id in self._media_overlays:
-            self.hide(media_id)
+        self.remove_media_overlays()
 
 
     def play_pause(self, media_id, gaction=None, param=None):

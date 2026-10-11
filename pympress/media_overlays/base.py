@@ -299,6 +299,12 @@ class VideoOverlay(builder.Builder):
         self.parent.remove(self.media_overlay)
 
 
+    def do_prepare(self):
+        """ Get the media ready to play, e.g. by loading and decoding its first frame, without showing it.
+        """
+        pass
+
+
     def do_play(self):
         """ Start playing the media file.
 
