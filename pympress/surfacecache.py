@@ -28,8 +28,8 @@ is done by the :class:`~pympress.surfacecache.SurfaceCache` class, using several
 `dict` of :class:`~cairo.ImageSurface` for storing rendered pages.
 
 The problem is, neither Gtk+ nor Poppler are particularly threadsafe.
-Hence the prerendering isn't really done in parallel in another thread, but
-scheduled on the main thread at idle times using GLib.idle_add().
+Hence prerendering is done in a background thread that opens the document
+a second time, so that no Poppler object is shared with the main thread.
 """
 
 import logging
@@ -42,7 +42,10 @@ import collections
 import gi
 import cairo
 gi.require_version('Gtk', '3.0')
-from gi.repository import GLib
+gi.require_version('Poppler', '0.18')
+from gi.repository import GLib, Poppler
+
+from pympress import document
 
 
 class SurfaceCache(object):
@@ -88,6 +91,21 @@ class SurfaceCache(object):
     #: Set of active widgets
     active_widgets = set()
 
+    #: `dict` of the managed :class:`~Gtk.Widget`, used to get their scale factor
+    widgets = {}
+
+    #: :class:`~collections.deque` of (widget name, PDF page number, scale) tuples to render in the background
+    jobs = None
+
+    #: :class:`~threading.Condition` protecting :attr:`jobs`, :attr:`generation` and :attr:`render_uri`
+    jobs_cond = None
+
+    #: `int` incremented when the document changes, to discard renders of the previous document
+    generation = 0
+
+    #: `str` URI of the document that the background thread renders
+    render_uri = None
+
     #: maximum number of pages we keep in cache
     max_pages = 200
 
@@ -95,6 +113,11 @@ class SurfaceCache(object):
         self.max_pages = max_pages
         self.doc = doc
         self.doc_lock = threading.Lock()
+        self.jobs = collections.deque()
+        self.jobs_cond = threading.Condition()
+        self.render_uri = doc.get_uri()
+
+        threading.Thread(target=self._render_worker, name='prerender', daemon=True).start()
 
 
     def add_widget(self, widget, wtype, prerender_enabled = True, zoomed = False, ignore_max = False):
@@ -116,6 +139,7 @@ class SurfaceCache(object):
             self.surface_size[widget_name] = (-1, -1)
             self.surface_type[widget_name] = wtype
             self.surface_factory[widget_name] = functools.partial(self._create_surface, widget)
+            self.widgets[widget_name] = widget
             if prerender_enabled and not zoomed:
                 self.enable_prerender(widget_name)
             if ignore_max:
@@ -132,6 +156,11 @@ class SurfaceCache(object):
         """
         with self.doc_lock:
             self.doc = new_doc
+
+        with self.jobs_cond:
+            self.jobs.clear()
+            self.generation += 1
+            self.render_uri = new_doc.get_uri()
 
         self.clear_cache()
 
@@ -263,16 +292,83 @@ class SurfaceCache(object):
             raise
 
 
-    def prerender(self, page_nb):
-        """ Queue a page for prerendering.
+    def prerender(self, page_nbs):
+        """ Replace the pages queued for prerendering in the background.
 
-        The specified page will be prerendered for all the registered widgets.
+        The specified pages will be prerendered for all the active widgets.
 
         Args:
-            page_nb (`int`):  number of the page to be prerendered
+            page_nbs (`list` of `int`):  numbers of the pages to be prerendered, by decreasing priority
         """
-        for name in self.active_widgets:
-            GLib.idle_add(self.renderer, name, page_nb)
+        jobs = []
+        for page_nb in page_nbs:
+            page = self.doc.page(page_nb)
+            if page is None or not page.can_render():
+                continue
+            # Use PDF page numbering, so that the worker does not need the notes mapping
+            jobs.extend((name, page.page_nb, self.widgets[name].get_scale_factor()) for name in self.active_widgets)
+
+        with self.jobs_cond:
+            self.jobs.clear()
+            self.jobs.extend(jobs)
+            self.jobs_cond.notify()
+
+
+    def _render_worker(self):
+        """ Background thread rendering the queued pages, using a Poppler document of its own.
+        """
+        poppler_doc, generation = None, -1
+        while True:
+            with self.jobs_cond:
+                while not self.jobs:
+                    self.jobs_cond.wait()
+                widget_name, page_nb, scale = self.jobs.popleft()
+                if generation != self.generation:
+                    generation, uri, poppler_doc = self.generation, self.render_uri, None
+
+            try:
+                if poppler_doc is None and uri is not None:
+                    poppler_doc = Poppler.Document.new_from_file(uri, None)
+                self._render_job(poppler_doc, generation, widget_name, page_nb, scale)
+            except Exception:
+                logger.exception('Failed prerendering page {} for widget {}'.format(page_nb, widget_name))
+
+
+    def _render_job(self, poppler_doc, generation, widget_name, page_nb, scale):
+        """ Render a page for a widget and store it in the cache, unless the configuration changed in the meantime.
+
+        Args:
+            poppler_doc (:class:`~Poppler.Document`):  the document opened by the background thread
+            generation (`int`):  the value of :attr:`generation` when the document was opened
+            widget_name (`str`):  name of the concerned widget
+            page_nb (`int`):  PDF number of the page to render
+            scale (`int`):  scale factor of the widget
+        """
+        with self.locks[widget_name]:
+            if page_nb in self.surface_cache[widget_name]:
+                return
+            ww, wh = self.surface_size[widget_name]
+            wtype = self.surface_type[widget_name]
+
+        if ww < 0 or wh < 0 or poppler_doc is None:
+            return
+
+        surface = cairo.ImageSurface(cairo.Format.RGB24, ww * scale, wh * scale)
+        surface.set_device_scale(scale, scale)
+        context = cairo.Context(surface)
+        document.render_poppler_page(poppler_doc.get_page(page_nb), context, ww, wh, wtype)
+        del context
+
+        with self.locks[widget_name]:
+            pc = self.surface_cache[widget_name]
+            if generation != self.generation or page_nb in pc or \
+                    (ww, wh) != self.surface_size[widget_name] or wtype != self.surface_type[widget_name]:
+                return
+
+            pc[page_nb] = surface
+            if widget_name not in self.unlimited:
+                while len(pc) > self.max_pages:
+                    pc.popitem(False)
 
 
     def renderer(self, widget_name, page_nb):

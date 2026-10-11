@@ -241,6 +241,39 @@ class Link(object):
         return lambda *a, **k: fun(*(tuple(args) + tuple(a)), **dict(kwargs, **k))
 
 
+def render_poppler_page(page, cr, ww, wh, dtype=PdfPage.FULL):
+    """ Render a Poppler page on a Cairo surface, scaled to fit the target size.
+
+    Args:
+        page (:class:`~Poppler.Page`):  the page to render
+        cr (:class:`~Gdk.CairoContext`):  target surface
+        ww (`int`):  target width in pixels
+        wh (`int`):  target height in pixels
+        dtype (:class:`~pympress.document.PdfPage`):  the type of document that should be rendered
+    """
+    pw, ph = dtype.scale().from_screen(*page.get_size())
+
+    cr.set_source_rgb(1, 1, 1)
+
+    # Scale
+    scale = min(ww / pw, wh / ph)
+    cr.scale(scale, scale)
+
+    cr.rectangle(0, 0, pw, ph)
+    cr.fill()
+
+    # For "regular" pages, there is no problem: just render them.
+    # For other pages (i.e. half of a page), the widget already has correct
+    # dimensions so we don't need to deal with that. But for right and bottom
+    # halves we must translate the output in order to only show the correct half.
+    if dtype == PdfPage.RIGHT:
+        cr.translate(-pw, 0)
+    elif dtype == PdfPage.BOTTOM:
+        cr.translate(0, -ph)
+
+    page.render(cr)
+
+
 #: A class that holds all the properties for media files
 Media = collections.namedtuple('Media', ['x1', 'y1', 'x2', 'y2', 'filename', 'autoplay', 'repeat', 'poster',
                                          'show_controls', 'type', 'start_pos', 'duration'],
@@ -668,27 +701,7 @@ class Page(object):
             wh (`int`):  target height in pixels
             dtype (:class:`~pympress.document.PdfPage`):  the type of document that should be rendered
         """
-        pw, ph = self.get_size(dtype)
-
-        cr.set_source_rgb(1, 1, 1)
-
-        # Scale
-        scale = min(ww / pw, wh / ph)
-        cr.scale(scale, scale)
-
-        cr.rectangle(0, 0, pw, ph)
-        cr.fill()
-
-        # For "regular" pages, there is no problem: just render them.
-        # For other pages (i.e. half of a page), the widget already has correct
-        # dimensions so we don't need to deal with that. But for right and bottom
-        # halves we must translate the output in order to only show the correct half.
-        if dtype == PdfPage.RIGHT:
-            cr.translate(-pw, 0)
-        elif dtype == PdfPage.BOTTOM:
-            cr.translate(0, -ph)
-
-        self.page.render(cr)
+        render_poppler_page(self.page, cr, ww, wh, dtype)
 
 
     def can_render(self):

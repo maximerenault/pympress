@@ -1232,8 +1232,8 @@ class UI(builder.Builder):
         # Prerender the 4 next pages and the 2 previous ones
         page_max = min(self.doc.pages_number(), self.preview_page + self.next_frames_count + 4)
         page_min = max(0, self.preview_page - 2)
-        for p in list(range(self.preview_page + 1, page_max)) + list(range(self.preview_page, page_min, -1)):
-            self.cache.prerender(p)
+        self.cache.prerender(list(range(self.preview_page + 1, page_max)) +
+                             list(range(self.preview_page, page_min, -1)))
 
         if is_preview:
             return
