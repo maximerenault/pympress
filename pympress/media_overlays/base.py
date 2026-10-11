@@ -277,7 +277,7 @@ class VideoOverlay(builder.Builder):
 
 
     def do_hide(self, *args):
-        """ Remove widget from overlays. Needs to be called via :func:`~GLib.idle_add`.
+        """ Remove widget from overlays. Needs to be called from the main thread.
 
         Returns:
             `bool`: `True` iff this function should be run again (:func:`~GLib.idle_add` convention)

@@ -307,7 +307,7 @@ class Media(object):
             self._media_overlays[media_id][1].mute(False)
 
             if any(overlay.autoplay for overlay in self._media_overlays[media_id]):
-                GLib.idle_add(self.play, media_id)
+                self.play(media_id)
             # TODO: handle poster
 
 
@@ -343,7 +343,8 @@ class Media(object):
             c, p = self._media_overlays[media_id]
             p.show()
             c.show()
-            GLib.idle_add(lambda: any(p.do_play() for p in self._media_overlays[media_id]))
+            p.do_play()
+            c.do_play()
 
 
     def hide(self, media_id, gaction=None, param=None):
@@ -356,16 +357,15 @@ class Media(object):
         """
         if media_id in self._media_overlays:
             c, p = self._media_overlays[media_id]
-            if c.is_shown(): GLib.idle_add(c.do_hide)
-            if p.is_shown(): GLib.idle_add(p.do_hide)
+            if c.is_shown(): c.do_hide()
+            if p.is_shown(): p.do_hide()
 
 
     def hide_all(self):
         """ Stops all playing medias and hides the players. Used before exit.
         """
-        for c, p in self._media_overlays.values():
-            if c.is_shown(): GLib.idle_add(c.do_hide)
-            if p.is_shown(): GLib.idle_add(p.do_hide)
+        for media_id in self._media_overlays:
+            self.hide(media_id)
 
 
     def play_pause(self, media_id, gaction=None, param=None):
@@ -376,7 +376,8 @@ class Media(object):
             gaction (:class:`~Gio.Action`): the action triggering the call
             param (:class:`~GLib.Variant`): the parameter as a variant, or None
         """
-        GLib.idle_add(lambda: any(p.do_play_pause() for p in self._media_overlays[media_id]))
+        for overlay in self._media_overlays[media_id]:
+            overlay.do_play_pause()
 
 
     def set_time(self, media_id, gaction=None, param=None):
@@ -388,7 +389,8 @@ class Media(object):
             param (:class:`~GLib.Variant`): A wrapped float containing the time to which we have to go.
         """
         t = param.get_double()
-        GLib.idle_add(lambda: any(p.do_set_time(t) for p in self._media_overlays[media_id]))
+        for overlay in self._media_overlays[media_id]:
+            overlay.do_set_time(t)
 
 
     def _setup_backends(self):

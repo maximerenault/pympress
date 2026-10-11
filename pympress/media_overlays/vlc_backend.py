@@ -210,7 +210,8 @@ class VlcOverlay(base.VideoOverlay):
         """
         time = self.player.get_time() / 1000. or 1.
         if self.last_timestamp <= self.end_pos <= time:
-            self.handle_end()
+            # Called from a VLC thread, which can not stop its own player
+            GLib.idle_add(self.handle_end)
         self.last_timestamp = time
         self.update_progress(time)
 
