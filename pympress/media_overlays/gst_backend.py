@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 import gi
 gi.require_version('Gst', '1.0')
 gi.require_version('Gtk', '3.0')
-from gi.repository import GLib, Gst, Gtk
+from gi.repository import Gdk, GLib, Gst, Gtk
 
 
 from pympress import util
@@ -290,10 +290,17 @@ class GstOverlay(base.VideoOverlay):
         # Not show_all, which would show the controls even when the media does not want them
         video.show()
         self.video_box.show()
-        self.media_overlay.pack_start(video, True, True, 0)
+        # Pause or resume by clicking the video, while the controls handle their own clicks
+        clickable = Gtk.EventBox(visible_window=False)
+        clickable.add(video)
+        clickable.connect('button-press-event', self.play_pause)
+        clickable.show()
+        self.media_overlay.pack_start(clickable, True, True, 0)
 
         # The widget of the window sink floats over the slide, and follows where the placeholder is shown
         self.placeholder = Gtk.DrawingArea()
+        # Receive clicks, so that they reach the handler pausing the video
+        self.placeholder.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         self.placeholder.connect('map', self.on_placeholder_mapped)
         self.placeholder.connect('unmap', self.on_placeholder_mapped)
         self.video_box.pack_start(self.placeholder, True, True, 0)

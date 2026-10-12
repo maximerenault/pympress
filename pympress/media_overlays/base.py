@@ -190,9 +190,13 @@ class VideoOverlay(builder.Builder):
 
 
     def play_pause(self, *args):
-        """ Callback to toggle play/pausing from clicking on the DrawingArea
+        """ Callback to toggle play/pausing from clicking on the media
+
+        Returns:
+            `bool`: `True` to stop the click from reaching the slide below
         """
-        return self.action_map.lookup_action('pause').activate()
+        self.action_map.lookup_action('pause').activate()
+        return True
 
 
     def handle_end(self):
