@@ -97,6 +97,8 @@ class VideoOverlay(builder.Builder):
     controls = 'never'
     #: `int` id of the timeout showing the controls while the mouse hovers over the media, or 0
     hover_timeout = 0
+    #: `bool` whether the overlay can be shown before playing, over the poster, without hiding it
+    shows_poster_when_stopped = False
 
     def __init__(self, container, page_type, action_map, media, controls=None):
         super(VideoOverlay, self).__init__()

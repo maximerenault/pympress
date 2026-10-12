@@ -385,6 +385,11 @@ class Media(object):
         for overlay in self._media_overlays[media_id]:
             overlay.do_prepare()
 
+        # Show the presenter's controls over the poster already, as a reminder to play the media
+        c, p = self._media_overlays[media_id]
+        if p.controls != 'never' and p.shows_poster_when_stopped:
+            p.show()
+
 
     def hide(self, media_id, gaction=None, param=None):
         """ Stops playing a media and hides the player. Used as a callback.
@@ -416,6 +421,11 @@ class Media(object):
             gaction (:class:`~Gio.Action`): the action triggering the call
             param (:class:`~GLib.Variant`): the parameter as a variant, or None
         """
+        # The presenter's controls may be shown before playing, then start playing in all windows
+        if not self._media_overlays[media_id][0].is_shown():
+            self.play(media_id)
+            return
+
         for overlay in self._media_overlays[media_id]:
             overlay.do_play_pause()
 

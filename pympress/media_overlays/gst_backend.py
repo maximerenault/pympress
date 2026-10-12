@@ -251,6 +251,10 @@ class GstOverlay(base.VideoOverlay):
     master = None
     #: `bool` whether to stop the pipeline once it is done prerolling, as stopping it meanwhile blocks
     stop_when_ready = False
+    #: `bool` whether playing was requested since the last stop, so that the video is shown instead of the poster
+    started = False
+    #: `bool` the video stays hidden until played, showing the poster below, so the controls can be shown before
+    shows_poster_when_stopped = True
     #: `list` of the handler ids of our signals on the bus of the pipeline
     bus_handlers = []
     #: `bool` whether to release the pipeline once it is done prerolling, as the overlay was removed meanwhile
@@ -570,8 +574,8 @@ class GstOverlay(base.VideoOverlay):
         # ensure the scroll bar is updated
         GLib.idle_add(self.do_update_duration)
         GLib.timeout_add(self.update_freq, self.do_update_time)
-        # ensure the overlay is visible (if needed)
-        if not self.media_type.startswith('audio'):
+        # ensure the video is visible if it is playing, e.g. when restarting after an error
+        if self.started and not self.media_type.startswith('audio'):
             self.video_widget.show()
 
 
@@ -616,6 +620,9 @@ class GstOverlay(base.VideoOverlay):
         if self.master is None:
             self.attach_sinks()
         self.playbin.set_state(Gst.State.PLAYING)
+        self.started = True
+        if not self.media_type.startswith('audio'):
+            self.video_widget.show()
 
         return False
 
@@ -651,6 +658,7 @@ class GstOverlay(base.VideoOverlay):
                 self.stop_when_ready = True
             else:
                 self.stop_pipeline()
+        self.started = False
         self.video_widget.hide()
 
         return False
