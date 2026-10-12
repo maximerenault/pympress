@@ -202,6 +202,16 @@ class VlcOverlay(base.VideoOverlay):
         self.player.stop()
 
 
+    def remove(self):
+        """ Stop listening to the player, whose callbacks keep this overlay alive, then stop and remove the widget.
+        """
+        event_manager = self.player.event_manager()
+        for event_type in [vlc.EventType.MediaPlayerEndReached, vlc.EventType.MediaPlayerLengthChanged,
+                           vlc.EventType.MediaPlayerTimeChanged]:
+            event_manager.event_detach(event_type)
+        super(VlcOverlay, self).remove()
+
+
     def time_changed(self, event):
         """ Handle time passing
 
