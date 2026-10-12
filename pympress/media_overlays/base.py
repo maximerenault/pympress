@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import GLib, Gio
+from gi.repository import GLib, Gio, Gtk
 
 from pympress import document, builder
 
@@ -77,6 +77,8 @@ class VideoOverlay(builder.Builder):
     end_pos = None
     #: `float` representing the last know timestamp at which the progress bar updated
     last_timestamp = 0.
+    #: `bool` whether the overlay was removed, and its widgets destroyed
+    removed = False
 
     #: `bool` that tracks whether the user is dragging the position
     dragging_position = False
@@ -157,6 +159,8 @@ class VideoOverlay(builder.Builder):
         Args:
             max_time (`float`): The maximum time in this video in s
         """
+        if self.removed:
+            return
         self.maxval = max_time
         self.progress.set_range(0, self.maxval)
         self.progress.set_increments(min(5., self.maxval / 10.), min(60., self.maxval / 10.))
@@ -170,7 +174,8 @@ class VideoOverlay(builder.Builder):
         Args:
             time (`float`): The time in this video in s
         """
-        self.progress.set_value(time)
+        if not self.removed:
+            self.progress.set_value(time)
 
 
     def progress_moved(self, rng, sc, val):
@@ -311,6 +316,11 @@ class VideoOverlay(builder.Builder):
         self.do_hide()
         self.parent.disconnect(self.position_handler)
         self.parent.remove(self.media_overlay)
+        # Destroying the widgets drops their signal handlers, which keep this overlay alive
+        self.removed = True
+        for obj in self.get_objects():
+            if isinstance(obj, Gtk.Widget):
+                obj.destroy()
 
 
     def do_prepare(self):
