@@ -63,6 +63,8 @@ class VideoOverlay(builder.Builder):
     relative_rect = None
     #: `tuple` containing the left/top/right/bottom coordinates of the drawing area in the visible slide
     rect = None
+    #: `int` handler id of the :attr:`~.Gtk.Overlay.signals.get_child_position` signal of :attr:`parent`
+    position_handler = None
     #: `bool` that tracks whether we should play automatically
     autoplay = False
     #: `bool` that tracks whether we should play after we finished playing
@@ -102,6 +104,7 @@ class VideoOverlay(builder.Builder):
         self.media_overlay.hide()
         self.media_overlay.set_no_show_all(True)
         self.parent.add_overlay(self.media_overlay)
+        self.position_handler = self.parent.connect('get-child-position', self.place)
 
         self.connect_signals(self)
 
@@ -214,23 +217,37 @@ class VideoOverlay(builder.Builder):
             logger.warning('Shifting media from BOTTOM notes page to TOP content page')
 
         self.rect = left, top, right, bot
-        if min(self.rect) < 0 or max(self.rect) > 1:
-            logger.warning('Negative margin(s) clipped to 0 (might alter the aspect ratio?): ' +
-                           'LTRB = {}'.format(self.rect))
 
 
     def resize(self):
         """ Adjust the position and size of the media overlay.
         """
-        if not self.is_shown():
-            return
+        if self.is_shown():
+            self.media_overlay.queue_resize()
 
-        pw, ph = self.parent.get_allocated_width(), self.parent.get_allocated_height()
+
+    def place(self, overlay, widget, allocation):
+        """ Position the media overlay on the slide, connected to :attr:`~.Gtk.Overlay.signals.get_child_position`.
+
+        Unlike margins, this keeps the size of media that extend past the slide, which then get clipped as in the PDF.
+
+        Args:
+            overlay (:class:`~Gtk.Overlay`): the overlay that is positioning its children
+            widget (:class:`~Gtk.Widget`): the child to position
+            allocation (:class:`~Gdk.Rectangle`): the position and size to fill in
+
+        Returns:
+            `bool`: `True` iff the widget is the media overlay and its position was set
+        """
+        if widget is not self.media_overlay:
+            return False
+
+        pw, ph = overlay.get_allocated_width(), overlay.get_allocated_height()
         left, top, right, bot = self.rect
-        self.media_overlay.props.margin_left   = pw * max(left, 0)
-        self.media_overlay.props.margin_right  = pw * min(1 - right, 1)
-        self.media_overlay.props.margin_bottom = ph * min(1 - bot, 1)
-        self.media_overlay.props.margin_top    = ph * max(top, 0)
+        allocation.x, allocation.y = round(pw * left), round(ph * top)
+        allocation.width = max(1, round(pw * right) - allocation.x)
+        allocation.height = max(1, round(ph * bot) - allocation.y)
+        return True
 
 
     def is_shown(self):
@@ -269,10 +286,6 @@ class VideoOverlay(builder.Builder):
     def show(self):
         """ Bring the widget to the top of the overlays if necessary.
         """
-        if min(self.rect) < 0 or max(self.rect) > 1:
-            logger.warning('Negative margin(s) clipped to 0 (might alter the aspect ratio?): ' +
-                           'LTRB = {}'.format(self.rect))
-
         if not self.is_shown():
             self.parent.reorder_overlay(self.media_overlay, 2)
             self.media_overlay.show()
@@ -296,6 +309,7 @@ class VideoOverlay(builder.Builder):
         """ Stop and remove the widget from the overlays, before discarding it.
         """
         self.do_hide()
+        self.parent.disconnect(self.position_handler)
         self.parent.remove(self.media_overlay)
 
 
