@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 import gi
 gi.require_version('Gst', '1.0')
 gi.require_version('Gtk', '3.0')
-from gi.repository import GLib, Gst
+from gi.repository import GLib, Gst, Gtk
 
 
 from pympress import util
@@ -73,9 +73,15 @@ class GstOverlay(base.VideoOverlay):
 
         super(GstOverlay, self).__init__(*args, **kwargs)
 
+        # Float the controls over the video, so that they do not shrink it
         self.media_overlay.remove(self.movie_zone)
-        self.media_overlay.pack_start(self.sink.props.widget, True, True,  0)
-        self.media_overlay.reorder_child(self.sink.props.widget, 0)
+        self.media_overlay.remove(self.toolbar)
+        video = Gtk.Overlay()
+        video.add(self.sink.props.widget)
+        video.add_overlay(self.toolbar)
+        self.toolbar.set_valign(Gtk.Align.END)
+        video.show()
+        self.media_overlay.pack_start(video, True, True, 0)
         self.sink.props.widget.hide()
 
         # Create bus to get events from GStreamer playin
