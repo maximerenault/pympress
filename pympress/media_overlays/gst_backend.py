@@ -287,7 +287,9 @@ class GstOverlay(base.VideoOverlay):
         video.add(self.video_box)
         video.add_overlay(self.toolbar)
         self.toolbar.set_valign(Gtk.Align.END)
-        video.show_all()
+        # Not show_all, which would show the controls even when the media does not want them
+        video.show()
+        self.video_box.show()
         self.media_overlay.pack_start(video, True, True, 0)
 
         # The widget of the window sink floats over the slide, and follows where the placeholder is shown
