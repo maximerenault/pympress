@@ -514,14 +514,29 @@ class GstOverlay(base.VideoOverlay):
 
 
     def on_error(self, bus, msg):
-        """ Callback triggered by pipeline errors, after which a deferred stop must be applied as prerolling ends.
+        """ Callback triggered by pipeline errors, which end prerolling, and fall back to gtksink if OpenGL failed.
 
         Args:
             bus (:class:`~Gst.Bus`): the bus that we are connected to
             msg (:class:`~Gst.Message`): the "error" message
         """
         logger.error('{} {}'.format(*msg.parse_error()))
+        gl_failed = any(overlay.window_sink is not None and msg.src.has_as_ancestor(overlay.window_sink.branch)
+                        for overlay in [self] + self.mirrors)
+        if gl_failed:
+            logger.warning('Failed to render videos with OpenGL, falling back to slower rendering')
+            WindowSink.enabled = False
+        stopping = self.is_stopping()
+
+        # The pipeline will not finish prerolling, so apply a deferred stop now
         self.on_async_done(bus, msg)
+
+        if gl_failed and not stopping:
+            self.stop_pipeline()
+            if self.is_shown():
+                self.do_play()
+            else:
+                self.do_prepare()
 
 
     def on_async_done(self, bus, msg):
