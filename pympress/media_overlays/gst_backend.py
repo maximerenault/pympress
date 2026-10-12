@@ -127,11 +127,14 @@ class WindowSink(object):
     widget = None
     #: The :class:`~pympress.media_overlays.gst_backend.GstOverlay` whose pipeline currently contains the sink
     owner = None
+    #: `list` of the :class:`~pympress.media_overlays.gst_backend.GstOverlay` pipeline owners waiting to preroll
+    waiting = []
     #: `bool` whether the sink started, i.e. OpenGL works
     started = False
 
     def __init__(self, window):
         self.window = window
+        self.waiting = []
         self.sink = Gst.ElementFactory.make('gtkglsink', None)
         self.sink.set_property('ignore-alpha', False)
         self.widget = self.sink.props.widget
@@ -209,11 +212,15 @@ class WindowSink(object):
 
 
     def detach(self):
-        """ Remove the sink from the pipeline of its owner, which must be stopped.
+        """ Remove the sink from the pipeline of its owner, which must be stopped, and wake up the pipeline waiting.
         """
         self.widget.hide()
         unlink_branch(self.owner.tee, self.branch)
         self.owner = None
+
+        for overlay in self.waiting:
+            GLib.idle_add(overlay.resume_prepare)
+        self.waiting.clear()
 
 
 class GstOverlay(base.VideoOverlay):
@@ -236,6 +243,8 @@ class GstOverlay(base.VideoOverlay):
     video_widget = None
     #: `list` of the :class:`~pympress.media_overlays.gst_backend.GstOverlay` displaying our pipeline, if we own it
     mirrors = []
+    #: `bool` whether we wait for the sink of a window to be free before prerolling
+    waiting_for_sink = False
     #: A :class:`~Gst.Element` tee splitting the decoded video towards the sink of each window
     tee = None
     #: The :class:`~pympress.media_overlays.gst_backend.GstOverlay` owning the pipeline we display, if not ourselves
@@ -326,14 +335,20 @@ class GstOverlay(base.VideoOverlay):
             self.window_sink.widget.hide()
 
 
-    def attach_sink(self):
+    def attach_sink(self, may_wait):
         """ Add a sink displaying the video in our window to the pipeline, which must be stopped.
 
         The sink of the window is used if it is free, otherwise we get a gtksink of our own,
-        e.g. for a second video on the same slide.
+        e.g. for a second video on the same slide, unless we may wait for the window sink to be released.
+
+        Args:
+            may_wait (`bool`): whether to wait for the window sink if it is about to be released
+
+        Returns:
+            `bool`: `False` iff we are waiting for the window sink
         """
         if self.sink is not None:
-            return
+            return True
 
         window_sink = WindowSink.get(self.parent)
         if window_sink is not None and window_sink.owner is None:
@@ -341,7 +356,11 @@ class GstOverlay(base.VideoOverlay):
             self.window_sink = window_sink
             self.sink = window_sink.sink
             self.video_widget = self.placeholder
-            return
+            return True
+
+        if window_sink is not None and may_wait and window_sink.owner.is_stopping():
+            window_sink.waiting.append(self.master or self)
+            return False
 
         self.sink = Gst.ElementFactory.make('gtksink', None)
         # Leave the borders transparent when the video does not fill the media area, showing the poster
@@ -349,6 +368,7 @@ class GstOverlay(base.VideoOverlay):
         self.video_widget = self.sink.props.widget
         self.video_box.pack_start(self.video_widget, True, True, 0)
         link_branch(self.tee, make_branch([self.sink]))
+        return True
 
 
     def detach_sink(self):
@@ -365,11 +385,18 @@ class GstOverlay(base.VideoOverlay):
         self.video_widget = self.placeholder
 
 
-    def attach_sinks(self):
+    def attach_sinks(self, may_wait=False):
         """ Add a sink for each window to our pipeline, which must be stopped.
+
+        Args:
+            may_wait (`bool`): whether to wait for window sinks that are about to be released
+
+        Returns:
+            `bool`: `True` iff all windows have a sink, otherwise we are waiting for one
         """
-        for overlay in [self] + self.mirrors:
-            overlay.attach_sink()
+        attached = [overlay.attach_sink(may_wait) for overlay in [self] + self.mirrors]
+        self.waiting_for_sink = not all(attached)
+        return not self.waiting_for_sink
 
 
     def stop_pipeline(self):
@@ -378,6 +405,27 @@ class GstOverlay(base.VideoOverlay):
         self.playbin.set_state(Gst.State.NULL)
         for overlay in [self] + self.mirrors:
             overlay.detach_sink()
+
+
+    def is_stopping(self):
+        """ Returns whether the pipeline displayed by this overlay is about to stop.
+
+        Returns:
+            `bool`: `True` iff the pipeline will stop once done prerolling
+        """
+        master = self.master or self
+        return master.stop_when_ready or master.release_when_ready
+
+
+    def resume_prepare(self):
+        """ Preroll now that a window sink was released, if we still need to.
+
+        Returns:
+            `bool`: `True` iff this function should be run again (:func:`~GLib.idle_add` convention)
+        """
+        if self.waiting_for_sink and not self.removed:
+            self.do_prepare()
+        return False
 
 
     def remove(self):
@@ -396,6 +444,9 @@ class GstOverlay(base.VideoOverlay):
         """
         if self.master is None:
             self.stop_pipeline()
+            for window_sink in WindowSink.windows.values():
+                if self in window_sink.waiting:
+                    window_sink.waiting.remove(self)
 
         bus = self.playbin.get_bus()
         for handler_id in self.bus_handlers:
@@ -527,8 +578,7 @@ class GstOverlay(base.VideoOverlay):
         """
         if self.master is None:
             self.stop_when_ready = False
-            if self.playbin.get_state(0).state < Gst.State.PAUSED:
-                self.attach_sinks()
+            if self.playbin.get_state(0).state < Gst.State.PAUSED and self.attach_sinks(may_wait=True):
                 self.playbin.set_state(Gst.State.PAUSED)
 
 
@@ -571,6 +621,7 @@ class GstOverlay(base.VideoOverlay):
         """ Stops playing in the backend player.
         """
         if self.master is None:
+            self.waiting_for_sink = False
             # Stopping during preroll waits for the decoders to be set up, which can take seconds
             if self.playbin.get_state(0).pending != Gst.State.VOID_PENDING:
                 self.stop_when_ready = True
