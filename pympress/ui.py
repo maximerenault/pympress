@@ -826,13 +826,13 @@ class UI(builder.Builder):
         self.autoplay.set_doc_pages(self.doc.pages_number())
         self.medias.purge_media_overlays()
         self.timing.set_document_metadata(self.doc.get_structure().copy(), self.doc.page_labels[:])
+        self.page_number.setup_doc_callbacks(self.doc)
+        self.deck.setup_doc_callbacks(self.doc)
 
         # A new document, restart at time 0, paused
         if not reloading:
             self.talk_time.pause()
             self.talk_time.reset_timer()
-            self.page_number.setup_doc_callbacks(self.doc)
-            self.deck.setup_doc_callbacks(self.doc)
 
         self.do_page_change(unpause=False)
 
