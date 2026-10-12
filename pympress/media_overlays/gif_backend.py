@@ -46,6 +46,8 @@ class GifOverlay(base.VideoOverlay):
     base_size = None
     #: The :class:`~cairo.Matrix` defining the zoom & shift to scale the gif
     transform = None
+    #: `int` id of the timeout showing the next frame, or 0
+    advance_timeout = 0
 
     def __init__(self, *args, **kwargs):
         super(GifOverlay, self).__init__(*args, **kwargs)
@@ -104,9 +106,21 @@ class GifOverlay(base.VideoOverlay):
         if self.anim_iter.advance():
             self.movie_zone.queue_draw()
 
+        # Keep a single pending frame, so it can be cancelled
+        if self.advance_timeout:
+            GLib.source_remove(self.advance_timeout)
         delay = self.anim_iter.get_delay_time()
-        if delay >= 0:
-            GLib.timeout_add(delay, self.advance_gif)
+        self.advance_timeout = GLib.timeout_add(delay, self.advance_gif) if delay >= 0 else 0
+        return False
+
+
+    def remove(self):
+        """ Stop advancing the gif and remove the widget from the overlays, before discarding it.
+        """
+        if self.advance_timeout:
+            GLib.source_remove(self.advance_timeout)
+            self.advance_timeout = 0
+        super(GifOverlay, self).remove()
 
 
     def do_set_time(self, t):
