@@ -115,6 +115,8 @@ class GstOverlay(base.VideoOverlay):
         """
         queue = Gst.ElementFactory.make('queue', None)
         sink = Gst.ElementFactory.make('gtksink', None)
+        # Leave the borders transparent when the video does not fill the media area, showing the poster
+        sink.set_property('ignore-alpha', False)
         video_sink = self.tee.get_parent()
         video_sink.add(queue)
         video_sink.add(sink)
