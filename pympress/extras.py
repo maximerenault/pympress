@@ -441,7 +441,8 @@ class Media(object):
         else:
             try:
                 from pympress.media_overlays.gst_backend import GstOverlay
-                gst_version = GstOverlay.setup_backend(self.conf.getlist('gstreamer', 'init_options'))
+                gst_version = GstOverlay.setup_backend(self.conf.getlist('gstreamer', 'init_options'),
+                                                       self.conf.getboolean('gstreamer', 'opengl'))
             except Exception as e:
                 gst_version = 'GStreamer not available'
                 logger.debug(_('Media support using {} is disabled.').format('GStreamer'))

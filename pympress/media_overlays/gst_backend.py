@@ -665,13 +665,18 @@ class GstOverlay(base.VideoOverlay):
 
 
     @classmethod
-    def setup_backend(cls, gst_opts = []):
+    def setup_backend(cls, gst_opts = [], opengl = True):
         """ Prepare/check the Gst backend.
+
+        Args:
+            gst_opts (`list`): the arguments for initializing GStreamer
+            opengl (`bool`): whether to render videos with OpenGL when it is available
 
         Returns:
             `str`: the version of Gst used by the backend
         """
         Gst.init(gst_opts)
+        WindowSink.enabled = opengl
 
         if Gst.ElementFactory.make('gtksink', None) is None:
             logger.warning('Can not create a gtksink. Check the gtk plugin for GStreamer is installed.')
