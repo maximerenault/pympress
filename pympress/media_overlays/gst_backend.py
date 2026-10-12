@@ -36,6 +36,53 @@ from pympress import util
 from pympress.media_overlays import base
 
 
+def link_branch(tee, branch):
+    """ Add a branch to the bin of a tee, fed by a new pad of the tee.
+
+    Args:
+        tee (:class:`~Gst.Element`): the tee splitting the decoded video towards each window
+        branch (:class:`~Gst.Bin`): the branch to add
+    """
+    tee.get_parent().add(branch)
+    request_pad = getattr(tee, 'request_pad_simple', None) or tee.get_request_pad
+    request_pad('src_%u').link(branch.get_static_pad('sink'))
+    # In case the pipeline is already set up
+    branch.sync_state_with_parent()
+
+
+def unlink_branch(tee, branch):
+    """ Stop a branch and remove it from the bin of a tee, releasing the pad of the tee that fed it.
+
+    Args:
+        tee (:class:`~Gst.Element`): the tee splitting the decoded video towards each window
+        branch (:class:`~Gst.Bin`): the branch to remove
+    """
+    branch.set_state(Gst.State.NULL)
+    request_pad = branch.get_static_pad('sink').get_peer()
+    request_pad.unlink(branch.get_static_pad('sink'))
+    tee.release_request_pad(request_pad)
+    tee.get_parent().remove(branch)
+
+
+def make_branch(elements):
+    """ Make a bin linking the given elements after a queue, to be fed by a tee.
+
+    Args:
+        elements (`list` of :class:`~Gst.Element`): the elements to link, ending with a sink
+
+    Returns:
+        :class:`~Gst.Bin`: the bin with a sink pad
+    """
+    branch = Gst.Bin.new(None)
+    elements = [Gst.ElementFactory.make('queue', None)] + elements
+    for element in elements:
+        branch.add(element)
+    for src, dst in zip(elements, elements[1:]):
+        src.link(dst)
+    branch.add_pad(Gst.GhostPad.new('sink', elements[0].get_static_pad('sink')))
+    return branch
+
+
 class GstOverlay(base.VideoOverlay):
     """ Simple Gstramer widget.
 
@@ -44,8 +91,12 @@ class GstOverlay(base.VideoOverlay):
 
     #: A :class:`~Gst.Playbin` to be play videos
     playbin = None
-    #: A :class:`~Gst.Base.Sink` to display video content
+    #: A :class:`~Gst.Base.Sink` to display video content, while the pipeline has one for our window
     sink = None
+    #: A :class:`~Gtk.Box` containing the widget of the :attr:`sink`, with the controls floating over it
+    video_box = None
+    #: `list` of the :class:`~pympress.media_overlays.gst_backend.GstOverlay` displaying our pipeline, if we own it
+    mirrors = []
     #: A :class:`~Gst.Element` tee splitting the decoded video towards the sink of each window
     tee = None
     #: The :class:`~pympress.media_overlays.gst_backend.GstOverlay` owning the pipeline we display, if not ourselves
@@ -74,7 +125,9 @@ class GstOverlay(base.VideoOverlay):
             self.tee = master.tee
         self.master = master
         self.bus_handlers = []
-        self.sink = self.add_sink()
+        self.mirrors = []
+        if master is not None:
+            master.mirrors.append(self)
 
         super(GstOverlay, self).__init__(*args, **kwargs)
 
@@ -82,12 +135,12 @@ class GstOverlay(base.VideoOverlay):
         self.media_overlay.remove(self.movie_zone)
         self.media_overlay.remove(self.toolbar)
         video = Gtk.Overlay()
-        video.add(self.sink.props.widget)
+        self.video_box = Gtk.Box()
+        video.add(self.video_box)
         video.add_overlay(self.toolbar)
         self.toolbar.set_valign(Gtk.Align.END)
-        video.show()
+        video.show_all()
         self.media_overlay.pack_start(video, True, True, 0)
-        self.sink.props.widget.hide()
 
         # Create bus to get events from GStreamer playin
         bus = self.playbin.get_bus()
@@ -113,26 +166,42 @@ class GstOverlay(base.VideoOverlay):
         return cls(*args, master=master, **kwargs)
 
 
-    def add_sink(self):
-        """ Add a branch to the tee with a new gtksink.
-
-        Returns:
-            :class:`~Gst.Element`: the new sink
+    def attach_sink(self):
+        """ Add a gtksink displaying the video in our window to the pipeline, which must be stopped.
         """
-        queue = Gst.ElementFactory.make('queue', None)
-        sink = Gst.ElementFactory.make('gtksink', None)
+        if self.sink is not None:
+            return
+
+        self.sink = Gst.ElementFactory.make('gtksink', None)
         # Leave the borders transparent when the video does not fill the media area, showing the poster
-        sink.set_property('ignore-alpha', False)
-        video_sink = self.tee.get_parent()
-        video_sink.add(queue)
-        video_sink.add(sink)
-        queue.link(sink)
-        request_pad = getattr(self.tee, 'request_pad_simple', None) or self.tee.get_request_pad
-        request_pad('src_%u').link(queue.get_static_pad('sink'))
-        # In case the pipeline is already set up
-        queue.sync_state_with_parent()
-        sink.sync_state_with_parent()
-        return sink
+        self.sink.set_property('ignore-alpha', False)
+        self.video_box.pack_start(self.sink.props.widget, True, True, 0)
+        link_branch(self.tee, make_branch([self.sink]))
+
+
+    def detach_sink(self):
+        """ Remove our sink from the pipeline, which must be stopped.
+        """
+        if self.sink is not None:
+            unlink_branch(self.tee, self.sink.get_parent())
+            if self.sink.props.widget.get_parent() is not None:
+                self.video_box.remove(self.sink.props.widget)
+        self.sink = None
+
+
+    def attach_sinks(self):
+        """ Add a sink for each window to our pipeline, which must be stopped.
+        """
+        for overlay in [self] + self.mirrors:
+            overlay.attach_sink()
+
+
+    def stop_pipeline(self):
+        """ Stop our pipeline and remove its sinks, so that sinks only exist while videos are used.
+        """
+        self.playbin.set_state(Gst.State.NULL)
+        for overlay in [self] + self.mirrors:
+            overlay.detach_sink()
 
 
     def remove(self):
@@ -150,7 +219,7 @@ class GstOverlay(base.VideoOverlay):
         """ Stop the pipeline and our handlers on its bus, which keep this overlay alive.
         """
         if self.master is None:
-            self.playbin.set_state(Gst.State.NULL)
+            self.stop_pipeline()
 
         bus = self.playbin.get_bus()
         for handler_id in self.bus_handlers:
@@ -237,7 +306,7 @@ class GstOverlay(base.VideoOverlay):
         """
         if self.stop_when_ready:
             self.stop_when_ready = False
-            self.playbin.set_state(Gst.State.NULL)
+            self.stop_pipeline()
             if self.release_when_ready:
                 self.release()
 
@@ -283,6 +352,7 @@ class GstOverlay(base.VideoOverlay):
         if self.master is None:
             self.stop_when_ready = False
             if self.playbin.get_state(0).state < Gst.State.PAUSED:
+                self.attach_sinks()
                 self.playbin.set_state(Gst.State.PAUSED)
 
 
@@ -293,6 +363,8 @@ class GstOverlay(base.VideoOverlay):
             `bool`: `True` iff this function should be run again (:func:`~GLib.idle_add` convention)
         """
         self.stop_when_ready = False
+        if self.master is None:
+            self.attach_sinks()
         self.playbin.set_state(Gst.State.PLAYING)
 
         return False
@@ -312,6 +384,8 @@ class GstOverlay(base.VideoOverlay):
             # Toggle from the pending state, so a pause during a state change is not lost
             ret, state, pending = self.playbin.get_state(0)
             target = state if pending == Gst.State.VOID_PENDING else pending
+            if target != Gst.State.PLAYING:
+                self.attach_sinks()
             self.playbin.set_state(Gst.State.PAUSED if target == Gst.State.PLAYING else Gst.State.PLAYING)
 
         return False
@@ -325,8 +399,9 @@ class GstOverlay(base.VideoOverlay):
             if self.playbin.get_state(0).pending != Gst.State.VOID_PENDING:
                 self.stop_when_ready = True
             else:
-                self.playbin.set_state(Gst.State.NULL)
-        self.sink.props.widget.hide()
+                self.stop_pipeline()
+        if self.sink is not None:
+            self.sink.props.widget.hide()
 
         return False
 
