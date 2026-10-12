@@ -258,6 +258,9 @@ class Pointer(object):
         if event.type == Gdk.EventType.ENTER_NOTIFY:
             self.show_pointer = True
             extras.Cursor.set_cursor(widget, 'invisible')
+            # The mouse may have moved over a widget hiding the slide, e.g. a video, since the last motion event
+            ex, ey = event.get_coords()
+            self.pointer_pos = (ex / widget.get_allocated_width(), ey / widget.get_allocated_height())
 
         elif event.type == Gdk.EventType.LEAVE_NOTIFY:
             self.show_pointer = False
