@@ -52,6 +52,10 @@ class GstOverlay(base.VideoOverlay):
     master = None
     #: `bool` whether to stop the pipeline once it is done prerolling, as stopping it meanwhile blocks
     stop_when_ready = False
+    #: `list` of the handler ids of our signals on the bus of the pipeline
+    bus_handlers = []
+    #: `bool` whether to release the pipeline once it is done prerolling, as the overlay was removed meanwhile
+    release_when_ready = False
 
     #: `int` number of milliseconds between updates
     update_freq = 200
@@ -69,6 +73,7 @@ class GstOverlay(base.VideoOverlay):
             self.playbin = master.playbin
             self.tee = master.tee
         self.master = master
+        self.bus_handlers = []
         self.sink = self.add_sink()
 
         super(GstOverlay, self).__init__(*args, **kwargs)
@@ -90,11 +95,12 @@ class GstOverlay(base.VideoOverlay):
         bus.enable_sync_message_emission()
         # Only the pipeline owner handles ending, as the actions reach both overlays
         if master is None:
-            bus.connect('message::eos', lambda *args: GLib.idle_add(self.handle_end))
-            bus.connect('message::error', lambda _, msg: logger.error('{} {}'.format(*msg.parse_error())))
-            bus.connect('message::async-done', self.on_async_done)
-        bus.connect('message::state-changed', self.on_state_changed)
-        bus.connect('message::duration-changed', lambda *args: GLib.idle_add(self.do_update_duration))
+            self.bus_handlers.append(bus.connect('message::eos', lambda *args: GLib.idle_add(self.handle_end)))
+            self.bus_handlers.append(bus.connect('message::error', self.on_error))
+            self.bus_handlers.append(bus.connect('message::async-done', self.on_async_done))
+        self.bus_handlers.append(bus.connect('message::state-changed', self.on_state_changed))
+        self.bus_handlers.append(bus.connect('message::duration-changed',
+                                             lambda *args: GLib.idle_add(self.do_update_duration)))
 
 
     @classmethod
@@ -127,6 +133,31 @@ class GstOverlay(base.VideoOverlay):
         queue.sync_state_with_parent()
         sink.sync_state_with_parent()
         return sink
+
+
+    def remove(self):
+        """ Stop and remove the widget from the overlays, then release the pipeline so that it can be freed.
+        """
+        super(GstOverlay, self).remove()
+        # Stopping during preroll is deferred, and so is releasing the pipeline
+        if self.stop_when_ready:
+            self.release_when_ready = True
+        else:
+            self.release()
+
+
+    def release(self):
+        """ Stop the pipeline and our handlers on its bus, which keep this overlay alive.
+        """
+        if self.master is None:
+            self.playbin.set_state(Gst.State.NULL)
+
+        bus = self.playbin.get_bus()
+        for handler_id in self.bus_handlers:
+            bus.disconnect(handler_id)
+        self.bus_handlers.clear()
+        bus.disable_sync_message_emission()
+        bus.remove_signal_watch()
 
 
     def is_playing(self):
@@ -186,6 +217,17 @@ class GstOverlay(base.VideoOverlay):
             self.on_initial_play()
 
 
+    def on_error(self, bus, msg):
+        """ Callback triggered by pipeline errors, after which a deferred stop must be applied as prerolling ends.
+
+        Args:
+            bus (:class:`~Gst.Bus`): the bus that we are connected to
+            msg (:class:`~Gst.Message`): the "error" message
+        """
+        logger.error('{} {}'.format(*msg.parse_error()))
+        self.on_async_done(bus, msg)
+
+
     def on_async_done(self, bus, msg):
         """ Callback triggered when the pipeline finished prerolling, to apply a stop requested meanwhile.
 
@@ -196,6 +238,8 @@ class GstOverlay(base.VideoOverlay):
         if self.stop_when_ready:
             self.stop_when_ready = False
             self.playbin.set_state(Gst.State.NULL)
+            if self.release_when_ready:
+                self.release()
 
 
     def on_initial_play(self):
