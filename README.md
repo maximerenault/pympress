@@ -248,6 +248,9 @@ To enable media playback, you need to have either:
 With Gstreamer, videos are rendered with OpenGL when it is available, which uses less CPU, and with the plain gtk sink otherwise.
 If videos do not display correctly, set `opengl = off` under the `[gstreamer]` section of your config file.
 
+Clicking a playing video pauses or resumes it. In the presenter window, its controls show while the mouse is over the video; set `media_controls` under the `[presenter]` section to `always`, `hover` or `never` to change this.
+The content window only shows controls when the PDF asks for them.
+
 On macOS, issues with the gstreamer brew formula may require users to set `GST_PLUGIN_SYSTEM_PATH` manually. For default homebrew configurations the value should be `/opt/homebrew/lib/gstreamer-1.0/`. Make sure to set this environmental variable globally, or pympress might not pick it up.
 
 To produce PDFs with media inclusion, the ideal method is to use beamer’s multimedia package, always with `\movie`:

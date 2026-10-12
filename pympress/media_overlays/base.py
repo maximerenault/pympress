@@ -48,6 +48,7 @@ class VideoOverlay(builder.Builder):
         page_type (:class:`~pympress.document.PdfPage`): the part of the page to display
         action_map (:class:`~Gio.ActionMap`): the action map that contains the actions for this media
         media (:class:`~pympress.document.Media`): the object defining the properties of the video such as position etc.
+        controls (`str`): when to show the controls, 'always', 'hover' or 'never', or `None` to follow the media
     """
     #: :class:`~Gtk.Overlay` that is the parent of the VideoOverlay widget.
     parent = None
@@ -92,7 +93,12 @@ class VideoOverlay(builder.Builder):
     #: :class:`~Gio.ActionMap` containing the actios for this video overlay
     action_map = None
 
-    def __init__(self, container, page_type, action_map, media):
+    #: `str` when to show the controls: 'always', 'hover' (while the mouse is over the media) or 'never'
+    controls = 'never'
+    #: `int` id of the timeout showing the controls while the mouse hovers over the media, or 0
+    hover_timeout = 0
+
+    def __init__(self, container, page_type, action_map, media, controls=None):
         super(VideoOverlay, self).__init__()
 
         self.parent = container
@@ -100,7 +106,8 @@ class VideoOverlay(builder.Builder):
         self.update_margins_for_page(page_type)
 
         self.load_ui('media_overlay')
-        self.toolbar.set_visible(media.show_controls)
+        self.controls = controls or ('always' if media.show_controls else 'never')
+        self.toolbar.set_visible(self.controls == 'always')
 
         # Keep the widget in its window while hidden, so players can attach to it before it is shown
         self.media_overlay.hide()
@@ -301,6 +308,40 @@ class VideoOverlay(builder.Builder):
             self.resize()
             self.parent.queue_draw()
 
+        if self.controls == 'hover' and not self.hover_timeout:
+            self.hover_timeout = GLib.timeout_add(100, self.update_hover)
+
+
+    def update_hover(self):
+        """ Show the controls only while the mouse is over the media.
+
+        This is polled, as the widgets displaying the video do not all get the mouse events, e.g. a VLC window.
+
+        Returns:
+            `bool`: `True` iff this function should be run again (:func:`~GLib.timeout_add` convention)
+        """
+        self.toolbar.set_visible(self.is_hovered())
+        return True
+
+
+    def is_hovered(self):
+        """ Returns whether the mouse is over the media.
+
+        Returns:
+            `bool`: `True` iff the mouse is over the area of the media in its window
+        """
+        window = self.media_overlay.get_window()
+        if window is None or not self.is_shown():
+            return False
+
+        pointer = window.get_display().get_default_seat().get_pointer()
+        under, _, _ = pointer.get_window_at_position()
+        if under is None or under.get_toplevel() != window.get_toplevel():
+            return False
+
+        _, x, y, _ = window.get_device_position(pointer)
+        return 0 <= x < self.media_overlay.get_allocated_width() and 0 <= y < self.media_overlay.get_allocated_height()
+
 
     def do_hide(self, *args):
         """ Stop and hide the widget. Needs to be called from the main thread.
@@ -310,6 +351,10 @@ class VideoOverlay(builder.Builder):
         """
         self.do_stop()
         self.media_overlay.hide()
+        if self.hover_timeout:
+            GLib.source_remove(self.hover_timeout)
+            self.hover_timeout = 0
+            self.toolbar.hide()
         self.parent.queue_draw()
         return False
 

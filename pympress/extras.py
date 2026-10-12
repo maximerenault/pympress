@@ -311,7 +311,7 @@ class Media(object):
                     'set_time': dict(activate=functools.partial(self.set_time, media_id), parameter_type=float)
                 }, action_group)
 
-                v_da_p = factory(self.p_overlay, page_type, action_group, media._replace(show_controls=True))
+                v_da_p = factory(self.p_overlay, page_type, action_group, media, controls=self.presenter_controls())
                 v_da_c = factory.mirror(v_da_p, self.c_overlay, page_type, action_group, media)
 
                 self._media_overlays[media_id] = (v_da_c, v_da_p)
@@ -325,6 +325,19 @@ class Media(object):
             else:
                 self.prepare(media_id)
             # TODO: handle poster
+
+
+    def presenter_controls(self):
+        """ Read when to show the media controls in the presenter window from the configuration.
+
+        Returns:
+            `str`: 'always', 'hover' (while the mouse is over the media) or 'never'
+        """
+        controls = self.conf.get('presenter', 'media_controls')
+        if controls not in {'always', 'hover', 'never'}:
+            logger.warning('Unknown value {} for media_controls, using hover'.format(controls))
+            return 'hover'
+        return controls
 
 
     def resize(self, which=None):
