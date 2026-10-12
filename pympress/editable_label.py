@@ -290,7 +290,7 @@ class PageNumber(EditableLabel):
         """ Make the UI re-display the pages from before editing the current page.
         """
         self.restore_label()
-        GLib.idle_add(self.page_change, unpause=False)
+        GLib.idle_add(lambda: self.page_change(unpause=False))
 
 
     def on_keypress(self, widget, event):
