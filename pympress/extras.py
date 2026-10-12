@@ -100,6 +100,9 @@ class Annotations(object):
         """ Update the wrap-width of the annotation column to fit its actual width
         """
         width = self.annotations_treeview.get_allocated_width()
+        # Not laid out yet, e.g. just shown: rewrapped again once the panes are redrawn
+        if width <= 4:
+            return
         self.annotation_renderer.set_property('wrap-width', width - 4)
         self.annotation_column.queue_resize()
 
